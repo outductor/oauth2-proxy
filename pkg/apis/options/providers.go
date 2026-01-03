@@ -82,6 +82,8 @@ type Provider struct {
 	ADFSConfig ADFSOptions `yaml:"ADFSConfig,omitempty"`
 	// BitbucketConfig holds all configurations for Bitbucket provider.
 	BitbucketConfig BitbucketOptions `yaml:"bitbucketConfig,omitempty"`
+	// DiscordConfig holds all configurations for Discord provider.
+	DiscordConfig DiscordOptions `yaml:"discordConfig,omitempty"`
 	// GitHubConfig holds all configurations for GitHubC provider.
 	GitHubConfig GitHubOptions `yaml:"githubConfig,omitempty"`
 	// GitLabConfig holds all configurations for GitLab provider.
@@ -139,9 +141,9 @@ type Provider struct {
 }
 
 // ProviderType is used to enumerate the different provider type options
-// Valid options are: adfs, azure, bitbucket, digitalocean facebook, github,
-// gitlab, google, keycloak, keycloak-oidc, linkedin, login.gov, nextcloud
-// and oidc.
+// Valid options are: adfs, azure, bitbucket, digitalocean, discord, facebook,
+// github, gitlab, google, keycloak, keycloak-oidc, linkedin, login.gov,
+// nextcloud and oidc.
 type ProviderType string
 
 const (
@@ -162,6 +164,9 @@ const (
 
 	// DigitalOceanProvider is the provider type for DigitalOcean
 	DigitalOceanProvider ProviderType = "digitalocean"
+
+	// DiscordProvider is the provider type for Discord
+	DiscordProvider ProviderType = "discord"
 
 	// FacebookProvider is the provider type for Facebook
 	FacebookProvider ProviderType = "facebook"
@@ -237,6 +242,22 @@ type BitbucketOptions struct {
 	Team string `yaml:"team,omitempty"`
 	// Repository sets restrict logins to user with access to this repository
 	Repository string `yaml:"repository,omitempty"`
+}
+
+// DiscordGuild represents a Discord guild (server) with optional role restrictions
+type DiscordGuild struct {
+	// ID is the Discord guild (server) ID
+	ID string `yaml:"id"`
+	// Roles restricts logins to users with these role IDs in this guild
+	// If empty, any member of the guild is allowed
+	Roles []string `yaml:"roles,omitempty"`
+}
+
+type DiscordOptions struct {
+	// Guilds restricts logins to members of these Discord servers (guilds)
+	// Each guild can optionally specify required roles
+	// If empty, any Discord user can authenticate
+	Guilds []DiscordGuild `yaml:"guilds,omitempty"`
 }
 
 type GitHubOptions struct {

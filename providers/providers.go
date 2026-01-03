@@ -50,6 +50,8 @@ func NewProvider(providerConfig options.Provider) (Provider, error) {
 		return NewCIDAASProvider(providerData, providerConfig), nil
 	case options.DigitalOceanProvider:
 		return NewDigitalOceanProvider(providerData), nil
+	case options.DiscordProvider:
+		return NewDiscordProvider(providerData, providerConfig.DiscordConfig)
 	case options.FacebookProvider:
 		return NewFacebookProvider(providerData), nil
 	case options.GitHubProvider:
@@ -187,9 +189,9 @@ func parseCodeChallengeMethod(providerConfig options.Provider) string {
 
 func providerRequiresOIDCProviderVerifier(providerType options.ProviderType) (bool, error) {
 	switch providerType {
-	case options.BitbucketProvider, options.DigitalOceanProvider, options.FacebookProvider, options.GitHubProvider,
-		options.GoogleProvider, options.KeycloakProvider, options.LinkedInProvider, options.LoginGovProvider,
-		options.NextCloudProvider, options.SourceHutProvider:
+	case options.BitbucketProvider, options.DigitalOceanProvider, options.DiscordProvider, options.FacebookProvider,
+		options.GitHubProvider, options.GoogleProvider, options.KeycloakProvider, options.LinkedInProvider,
+		options.LoginGovProvider, options.NextCloudProvider, options.SourceHutProvider:
 		return false, nil
 	case options.OIDCProvider, options.ADFSProvider, options.AzureProvider, options.CidaasProvider,
 		options.GitLabProvider, options.KeycloakOIDCProvider, options.MicrosoftEntraIDProvider:
