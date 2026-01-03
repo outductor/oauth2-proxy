@@ -204,6 +204,27 @@ ClaimSource allows loading a header value from a claim within the session
 | `prefix` | _string_ | Prefix is an optional prefix that will be prepended to the value of the<br/>claim if it is non-empty. |
 | `basicAuthPassword` | _[SecretSource](#secretsource)_ | BasicAuthPassword converts this claim into a basic auth header.<br/>Note the value of claim will become the basic auth username and the<br/>basicAuthPassword will be used as the password value. |
 
+### DiscordGuild
+
+(**Appears on:** [DiscordOptions](#discordoptions))
+
+DiscordGuild represents a Discord guild (server) with optional role restrictions
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `id` | _string_ | ID is the Discord guild (server) ID |
+| `roles` | _[]string_ | Roles restricts logins to users with these role IDs in this guild<br/>If empty, any member of the guild is allowed |
+
+### DiscordOptions
+
+(**Appears on:** [Provider](#provider))
+
+
+
+| Field | Type | Description |
+| ----- | ---- | ----------- |
+| `guilds` | _[[]DiscordGuild](#discordguild)_ | Guilds restricts logins to members of these Discord servers (guilds)<br/>Each guild can optionally specify required roles<br/>If empty, any Discord user can authenticate |
+
 ### GitHubOptions
 
 (**Appears on:** [Provider](#provider))
@@ -426,6 +447,7 @@ Provider holds all configuration for a single provider
 | `microsoftEntraIDConfig` | _[MicrosoftEntraIDOptions](#microsoftentraidoptions)_ | MicrosoftEntraIDConfig holds all configurations for Entra ID provider. |
 | `ADFSConfig` | _[ADFSOptions](#adfsoptions)_ | ADFSConfig holds all configurations for ADFS provider. |
 | `bitbucketConfig` | _[BitbucketOptions](#bitbucketoptions)_ | BitbucketConfig holds all configurations for Bitbucket provider. |
+| `discordConfig` | _[DiscordOptions](#discordoptions)_ | DiscordConfig holds all configurations for Discord provider. |
 | `githubConfig` | _[GitHubOptions](#githuboptions)_ | GitHubConfig holds all configurations for GitHubC provider. |
 | `gitlabConfig` | _[GitLabOptions](#gitlaboptions)_ | GitLabConfig holds all configurations for GitLab provider. |
 | `googleConfig` | _[GoogleOptions](#googleoptions)_ | GoogleConfig holds all configurations for Google provider. |
@@ -455,9 +477,9 @@ Provider holds all configuration for a single provider
 (**Appears on:** [Provider](#provider))
 
 ProviderType is used to enumerate the different provider type options
-Valid options are: adfs, azure, bitbucket, digitalocean facebook, github,
-gitlab, google, keycloak, keycloak-oidc, linkedin, login.gov, nextcloud
-and oidc.
+Valid options are: adfs, azure, bitbucket, digitalocean, discord, facebook,
+github, gitlab, google, keycloak, keycloak-oidc, linkedin, login.gov,
+nextcloud and oidc.
 
 ### Providers
 
