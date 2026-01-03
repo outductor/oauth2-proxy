@@ -76,7 +76,7 @@ func NewDiscordProvider(p *ProviderData, opts options.DiscordOptions) (*DiscordP
 
 	// Add guilds.members.read scope if any guild has role restrictions
 	if provider.hasRoleRestrictions() && !strings.Contains(p.Scope, "guilds.members.read") {
-		p.Scope = p.Scope + " guilds.members.read"
+		p.Scope += " guilds.members.read"
 	}
 
 	return provider, nil
