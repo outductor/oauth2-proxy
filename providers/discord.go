@@ -161,6 +161,8 @@ func (p *DiscordProvider) getUser(ctx context.Context, s *sessions.SessionState)
 }
 
 // getGuilds fetches the user's guild memberships from Discord API
+// Only guilds that are in the configured allowed list are retained.
+// If no guilds are configured, no guild IDs are added to session groups.
 func (p *DiscordProvider) getGuilds(ctx context.Context, s *sessions.SessionState) error {
 	var guilds []struct {
 		ID   string `json:"id"`
@@ -176,9 +178,17 @@ func (p *DiscordProvider) getGuilds(ctx context.Context, s *sessions.SessionStat
 		return fmt.Errorf("failed to get guilds: %v", err)
 	}
 
+	// Build a set of allowed guild IDs for filtering
+	allowedGuildSet := make(map[string]struct{}, len(p.Guilds))
+	for _, g := range p.Guilds {
+		allowedGuildSet[g.ID] = struct{}{}
+	}
+
+	// Only retain guilds that are in the allowed list (privacy protection)
 	for _, guild := range guilds {
-		logger.Printf("Member of Discord Guild: %q (%s)", guild.Name, guild.ID)
-		s.Groups = append(s.Groups, guild.ID)
+		if _, isAllowed := allowedGuildSet[guild.ID]; isAllowed {
+			s.Groups = append(s.Groups, guild.ID)
+		}
 	}
 
 	return nil
@@ -221,8 +231,6 @@ func (p *DiscordProvider) checkRestrictions(ctx context.Context, s *sessions.Ses
 		if _, isMember := userGuildSet[allowedGuild.ID]; !isMember {
 			continue
 		}
-
-		logger.Printf("Found Discord Guild: %q", allowedGuild.ID)
 
 		// If no role restrictions for this guild, user passes
 		if len(allowedGuild.Roles) == 0 {

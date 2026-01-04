@@ -71,7 +71,7 @@ func validateToken(ctx context.Context, p Provider, accessToken string, header h
 		return false
 	}
 
-	logger.Printf("%d GET %s %s", result.StatusCode(), stripToken(endpoint), result.Body())
+	logger.Printf("%d GET %s", result.StatusCode(), stripToken(endpoint))
 
 	if result.StatusCode() == 200 {
 		return true
