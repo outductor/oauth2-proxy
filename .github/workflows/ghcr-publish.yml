@@ -58,7 +58,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            BUILD_IMAGE=golang:1.25-bookworm
+            BUILD_IMAGE=golang:1.26-bookworm
             RUNTIME_IMAGE=gcr.io/distroless/static:nonroot
             VERSION=${{ github.ref_name }}
           cache-from: type=gha
