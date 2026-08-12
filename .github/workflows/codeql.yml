@@ -20,6 +20,11 @@ on:
       - 'docs/**'
   schedule:
     - cron: '0 15 * * 2'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
       
 jobs:
   CodeQL-Build:
