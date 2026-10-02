@@ -336,6 +336,8 @@ func TestDiscordProviderMultipleGuildsWithDifferentRoles(t *testing.T) {
 	session := CreateAuthorizedSession()
 	err := p.EnrichSession(context.Background(), session)
 	assert.NoError(t, err)
+	// Roles of every role-restricted guild are recorded, not only up to the first match
+	assert.Equal(t, []string{"111111111", "111111111:member", "222222222", "222222222:admin"}, session.Groups)
 }
 
 func TestDiscordProviderValidateSession(t *testing.T) {
@@ -463,4 +465,78 @@ func TestDiscordProviderRedeemMissingCode(t *testing.T) {
 
 	_, err := p.Redeem(context.Background(), "https://example.com/oauth2/callback", "", "")
 	assert.ErrorIs(t, err, ErrMissingCode)
+}
+
+func TestDiscordProviderGroupsOnlyContainConfiguredGuilds(t *testing.T) {
+	b := testDiscordBackend(map[string]string{
+		"/api/users/@me": `{"id": "123456789", "username": "testuser"}`,
+		"/api/users/@me/guilds": `[
+			{"id": "111111111", "name": "Test Guild 1"},
+			{"id": "333333333", "name": "Unrelated Guild"}
+		]`,
+	})
+	defer b.Close()
+
+	bURL, _ := url.Parse(b.URL)
+	p := testDiscordProvider(bURL.Host, options.DiscordOptions{
+		Guilds: []options.DiscordGuild{
+			{ID: "111111111"},
+			{ID: "222222222"},
+		},
+	})
+	p.ProfileURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+
+	session := CreateAuthorizedSession()
+	err := p.EnrichSession(context.Background(), session)
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"111111111"}, session.Groups)
+}
+
+func TestDiscordProviderRoleFetchErrorIsReported(t *testing.T) {
+	b := testDiscordBackend(map[string]string{
+		"/api/users/@me": `{"id": "123456789", "username": "testuser"}`,
+		"/api/users/@me/guilds": `[
+			{"id": "111111111", "name": "Test Guild 1"}
+		]`,
+		// No member endpoint: the role lookup fails with a 404
+	})
+	defer b.Close()
+
+	bURL, _ := url.Parse(b.URL)
+	p := testDiscordProvider(bURL.Host, options.DiscordOptions{
+		Guilds: []options.DiscordGuild{
+			{ID: "111111111", Roles: []string{"admin"}},
+		},
+	})
+	p.ProfileURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+
+	session := CreateAuthorizedSession()
+	err := p.EnrichSession(context.Background(), session)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "could not verify Discord roles")
+	assert.Contains(t, err.Error(), "111111111")
+}
+
+func TestDiscordProviderRoleFetchErrorIgnoredWhenAnotherGuildAllows(t *testing.T) {
+	b := testDiscordBackend(map[string]string{
+		"/api/users/@me": `{"id": "123456789", "username": "testuser"}`,
+		"/api/users/@me/guilds": `[
+			{"id": "111111111", "name": "Test Guild 1"},
+			{"id": "222222222", "name": "Test Guild 2"}
+		]`,
+	})
+	defer b.Close()
+
+	bURL, _ := url.Parse(b.URL)
+	p := testDiscordProvider(bURL.Host, options.DiscordOptions{
+		Guilds: []options.DiscordGuild{
+			{ID: "111111111", Roles: []string{"admin"}},
+			{ID: "222222222"},
+		},
+	})
+	p.ProfileURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+
+	session := CreateAuthorizedSession()
+	err := p.EnrichSession(context.Background(), session)
+	assert.NoError(t, err)
 }

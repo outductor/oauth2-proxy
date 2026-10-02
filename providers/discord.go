@@ -11,7 +11,6 @@ import (
 
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
-	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/requests"
 )
 
@@ -105,22 +104,11 @@ func (p *DiscordProvider) buildAPIURL(path string) string {
 
 // EnrichSession updates the User & Email after the initial Redeem
 func (p *DiscordProvider) EnrichSession(ctx context.Context, s *sessions.SessionState) error {
-	// Get user info
 	if err := p.getUser(ctx, s); err != nil {
 		return err
 	}
 
-	// Get guilds for group membership
-	if err := p.getGuilds(ctx, s); err != nil {
-		return err
-	}
-
-	// Check guild and role restrictions
-	if err := p.checkRestrictions(ctx, s); err != nil {
-		return err
-	}
-
-	return nil
+	return p.checkMembership(ctx, s)
 }
 
 // ValidateSession validates the AccessToken
@@ -160,38 +148,26 @@ func (p *DiscordProvider) getUser(ctx context.Context, s *sessions.SessionState)
 	return nil
 }
 
-// getGuilds fetches the user's guild memberships from Discord API
-// Only guilds that are in the configured allowed list are retained.
-// If no guilds are configured, no guild IDs are added to session groups.
-func (p *DiscordProvider) getGuilds(ctx context.Context, s *sessions.SessionState) error {
+// getUserGuildIDs fetches the IDs of the guilds the user is a member of
+func (p *DiscordProvider) getUserGuildIDs(ctx context.Context, accessToken string) (map[string]struct{}, error) {
 	var guilds []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID string `json:"id"`
 	}
 
 	err := requests.New(p.buildAPIURL("/api/users/@me/guilds")).
 		WithContext(ctx).
-		WithHeaders(makeDiscordHeader(s.AccessToken)).
+		WithHeaders(makeDiscordHeader(accessToken)).
 		Do().
 		UnmarshalInto(&guilds)
 	if err != nil {
-		return fmt.Errorf("failed to get guilds: %v", err)
+		return nil, fmt.Errorf("failed to get guilds: %v", err)
 	}
 
-	// Build a set of allowed guild IDs for filtering
-	allowedGuildSet := make(map[string]struct{}, len(p.Guilds))
-	for _, g := range p.Guilds {
-		allowedGuildSet[g.ID] = struct{}{}
-	}
-
-	// Only retain guilds that are in the allowed list (privacy protection)
+	ids := make(map[string]struct{}, len(guilds))
 	for _, guild := range guilds {
-		if _, isAllowed := allowedGuildSet[guild.ID]; isAllowed {
-			s.Groups = append(s.Groups, guild.ID)
-		}
+		ids[guild.ID] = struct{}{}
 	}
-
-	return nil
+	return ids, nil
 }
 
 // getRolesInGuild fetches the user's roles in a specific guild
@@ -212,72 +188,85 @@ func (p *DiscordProvider) getRolesInGuild(ctx context.Context, accessToken, guil
 	return member.Roles, nil
 }
 
-// checkRestrictions verifies that the user meets guild and role requirements
-func (p *DiscordProvider) checkRestrictions(ctx context.Context, s *sessions.SessionState) error {
+// checkMembership stores the user's membership in the configured guilds in the
+// session groups and verifies the guild and role restrictions.
+// Groups only contain configured guild IDs, plus "guildID:roleID" entries for
+// every role the user has in configured guilds that have role restrictions.
+func (p *DiscordProvider) checkMembership(ctx context.Context, s *sessions.SessionState) error {
 	// If no guild restrictions are configured, allow all Discord users
 	if len(p.Guilds) == 0 {
 		return nil
 	}
 
-	// Build a set of user's guilds for quick lookup
-	userGuildSet := make(map[string]struct{}, len(s.Groups))
-	for _, g := range s.Groups {
-		userGuildSet[g] = struct{}{}
+	userGuilds, err := p.getUserGuildIDs(ctx, s.AccessToken)
+	if err != nil {
+		return err
 	}
 
-	// Check each configured guild
-	for _, allowedGuild := range p.Guilds {
-		// Check if user is a member of this guild
-		if _, isMember := userGuildSet[allowedGuild.ID]; !isMember {
+	var groups []string
+	var roleErrs []error
+	for _, guild := range p.Guilds {
+		if _, isMember := userGuilds[guild.ID]; !isMember {
 			continue
 		}
+		groups = append(groups, guild.ID)
 
-		// If no role restrictions for this guild, user passes
-		if len(allowedGuild.Roles) == 0 {
-			return nil
+		if len(guild.Roles) == 0 {
+			continue
 		}
-
-		// Check role restrictions for this guild
-		userRoles, err := p.getRolesInGuild(ctx, s.AccessToken, allowedGuild.ID)
+		roles, err := p.getRolesInGuild(ctx, s.AccessToken, guild.ID)
 		if err != nil {
-			logger.Printf("Could not fetch roles for guild %s: %v", allowedGuild.ID, err)
+			roleErrs = append(roleErrs, fmt.Errorf("guild %s: %v", guild.ID, err))
 			continue
 		}
-
-		// Build a set of user's roles for quick lookup
-		userRoleSet := make(map[string]struct{}, len(userRoles))
-		for _, roleID := range userRoles {
-			userRoleSet[roleID] = struct{}{}
-			// Add guild:role format to groups for potential use in authorization
-			s.Groups = append(s.Groups, fmt.Sprintf("%s:%s", allowedGuild.ID, roleID))
-		}
-
-		// Check if user has any of the required roles
-		for _, requiredRole := range allowedGuild.Roles {
-			if _, hasRole := userRoleSet[requiredRole]; hasRole {
-				logger.Printf("Found Discord Role: %s in Guild: %s", requiredRole, allowedGuild.ID)
-				return nil
-			}
+		for _, role := range roles {
+			groups = append(groups, discordRoleGroup(guild.ID, role))
 		}
 	}
+	s.Groups = groups
 
-	// Determine appropriate error message
+	if p.isAllowed(groups) {
+		return nil
+	}
+	if len(roleErrs) > 0 {
+		return fmt.Errorf("could not verify Discord roles: %w", errors.Join(roleErrs...))
+	}
 	if p.hasRoleRestrictions() {
-		logger.Printf("User does not have required role in any allowed guild")
 		return errors.New("user does not have any required Discord role in allowed guilds")
 	}
-
-	logger.Printf("User is not a member of any allowed guild. Required: %v", p.getGuildIDs())
 	return errors.New("user is not a member of any allowed Discord guild")
 }
 
-// getGuildIDs returns a list of configured guild IDs for logging
-func (p *DiscordProvider) getGuildIDs() []string {
-	ids := make([]string, len(p.Guilds))
-	for i, g := range p.Guilds {
-		ids[i] = g.ID
+// isAllowed reports whether the given session groups satisfy any of the
+// configured guild and role restrictions
+func (p *DiscordProvider) isAllowed(groups []string) bool {
+	if len(p.Guilds) == 0 {
+		return true
 	}
-	return ids
+
+	groupSet := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		groupSet[group] = struct{}{}
+	}
+
+	for _, guild := range p.Guilds {
+		if _, isMember := groupSet[guild.ID]; !isMember {
+			continue
+		}
+		if len(guild.Roles) == 0 {
+			return true
+		}
+		for _, role := range guild.Roles {
+			if _, hasRole := groupSet[discordRoleGroup(guild.ID, role)]; hasRole {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func discordRoleGroup(guildID, roleID string) string {
+	return fmt.Sprintf("%s:%s", guildID, roleID)
 }
 
 // Redeem exchanges the OAuth2 authorization code for an access token and keeps
