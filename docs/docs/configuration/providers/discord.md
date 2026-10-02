@@ -41,9 +41,11 @@ Without any configured guilds, every Discord account can log in, and a warning i
 ### User information
 
 Discord does not provide an email address with the default scopes. The session stores the user's Discord user ID as
-both the user and the email, so `X-Forwarded-User` and `X-Forwarded-Email` contain the numeric user ID. Set
-`--email-domain=*` so that the user ID passes the email domain check. The display name (or username if no display name
-is set) is used as the preferred username.
+both the user and the email, so `X-Forwarded-User` and `X-Forwarded-Email` contain the numeric user ID. The display
+name (or username if no display name is set) is used as the preferred username.
+
+Because the email is a user ID, it never matches an email domain. Either set `--email-domain=*`, or leave it unset and
+list the allowed Discord user IDs, one per line, in `--authenticated-emails-file`.
 
 ### Groups
 
@@ -59,5 +61,5 @@ passed to upstreams with `--pass-user-headers` / `--set-xauthrequest`.
 
 Guild and role membership is checked at login. To also remove access when a user leaves a guild or loses a role, set
 `--cookie-refresh` (for example `--cookie-refresh=1h`). On every refresh the access token is refreshed, the membership
-is re-read and sessions that no longer meet the restrictions are rejected. Discord access tokens expire after 7 days,
-so the refresh period should be shorter than that.
+is re-read and sessions that no longer meet the restrictions are rejected. The session expires when the Discord access
+token does (`expires_in`, currently 7 days), so the refresh period should be shorter than that.
