@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
@@ -401,6 +402,7 @@ func TestDiscordProviderRefreshSession(t *testing.T) {
 	assert.True(t, refreshed)
 	assert.Equal(t, "new_access_token", session.AccessToken)
 	assert.Equal(t, "new_refresh_token", session.RefreshToken)
+	assert.NotNil(t, session.ExpiresOn)
 }
 
 func TestDiscordProviderRefreshSessionNoRefreshToken(t *testing.T) {
@@ -413,4 +415,52 @@ func TestDiscordProviderRefreshSessionNoRefreshToken(t *testing.T) {
 	refreshed, err := p.RefreshSession(context.Background(), session)
 	assert.NoError(t, err)
 	assert.False(t, refreshed)
+}
+
+func TestDiscordProviderRedeem(t *testing.T) {
+	b := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/oauth2/token" || r.Method != "POST" {
+				w.WriteHeader(404)
+				return
+			}
+			_ = r.ParseForm()
+			if r.Form.Get("grant_type") != "authorization_code" || r.Form.Get("code") != "code1234" ||
+				r.Form.Get("code_verifier") != "verifier" || r.Form.Get("client_id") != "client" {
+				w.WriteHeader(400)
+				w.Write([]byte(`{"error": "invalid_request"}`))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			w.Write([]byte(`{
+				"access_token": "access_token",
+				"refresh_token": "refresh_token",
+				"expires_in": 604800,
+				"token_type": "Bearer",
+				"scope": "identify guilds"
+			}`))
+		}))
+	defer b.Close()
+
+	bURL, _ := url.Parse(b.URL)
+	p := testDiscordProvider(bURL.Host, options.DiscordOptions{})
+	p.RedeemURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/oauth2/token"}
+	p.ClientID = "client"
+	p.ClientSecret = "secret"
+
+	session, err := p.Redeem(context.Background(), "https://example.com/oauth2/callback", "code1234", "verifier")
+	assert.NoError(t, err)
+	assert.Equal(t, "access_token", session.AccessToken)
+	assert.Equal(t, "refresh_token", session.RefreshToken)
+	assert.NotNil(t, session.CreatedAt)
+	assert.NotNil(t, session.ExpiresOn)
+	assert.WithinDuration(t, time.Now().Add(604800*time.Second), *session.ExpiresOn, time.Minute)
+}
+
+func TestDiscordProviderRedeemMissingCode(t *testing.T) {
+	p := testDiscordProvider("", options.DiscordOptions{})
+
+	_, err := p.Redeem(context.Background(), "https://example.com/oauth2/callback", "", "")
+	assert.ErrorIs(t, err, ErrMissingCode)
 }

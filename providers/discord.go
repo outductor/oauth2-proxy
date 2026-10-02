@@ -280,20 +280,52 @@ func (p *DiscordProvider) getGuildIDs() []string {
 	return ids
 }
 
+// Redeem exchanges the OAuth2 authorization code for an access token and keeps
+// the refresh token and expiry so the session can be refreshed later
+func (p *DiscordProvider) Redeem(ctx context.Context, redirectURL, code, codeVerifier string) (*sessions.SessionState, error) {
+	if code == "" {
+		return nil, ErrMissingCode
+	}
+
+	params := url.Values{}
+	params.Add("grant_type", "authorization_code")
+	params.Add("code", code)
+	params.Add("redirect_uri", redirectURL)
+	if codeVerifier != "" {
+		params.Add("code_verifier", codeVerifier)
+	}
+
+	s := &sessions.SessionState{}
+	if err := p.requestToken(ctx, params, s); err != nil {
+		return nil, fmt.Errorf("failed to redeem code: %v", err)
+	}
+	return s, nil
+}
+
 // RefreshSession refreshes the user's session using the refresh token
 func (p *DiscordProvider) RefreshSession(ctx context.Context, s *sessions.SessionState) (bool, error) {
 	if s == nil || s.RefreshToken == "" {
 		return false, nil
 	}
 
-	clientSecret, err := p.GetClientSecret()
-	if err != nil {
-		return false, err
-	}
-
 	params := url.Values{}
 	params.Add("grant_type", "refresh_token")
 	params.Add("refresh_token", s.RefreshToken)
+
+	if err := p.requestToken(ctx, params, s); err != nil {
+		return false, fmt.Errorf("failed to refresh token: %v", err)
+	}
+
+	return true, nil
+}
+
+// requestToken calls the token endpoint with the given grant parameters and
+// stores the returned tokens and expiry in the session
+func (p *DiscordProvider) requestToken(ctx context.Context, params url.Values, s *sessions.SessionState) error {
+	clientSecret, err := p.GetClientSecret()
+	if err != nil {
+		return err
+	}
 	params.Add("client_id", p.ClientID)
 	params.Add("client_secret", clientSecret)
 
@@ -311,7 +343,10 @@ func (p *DiscordProvider) RefreshSession(ctx context.Context, s *sessions.Sessio
 		Do().
 		UnmarshalInto(&response)
 	if err != nil {
-		return false, fmt.Errorf("failed to refresh token: %v", err)
+		return err
+	}
+	if response.AccessToken == "" {
+		return errors.New("no access token in response")
 	}
 
 	s.AccessToken = response.AccessToken
@@ -319,7 +354,9 @@ func (p *DiscordProvider) RefreshSession(ctx context.Context, s *sessions.Sessio
 		s.RefreshToken = response.RefreshToken
 	}
 	s.CreatedAtNow()
-	s.ExpiresIn(time.Duration(response.ExpiresIn) * time.Second)
+	if response.ExpiresIn > 0 {
+		s.ExpiresIn(time.Duration(response.ExpiresIn) * time.Second)
+	}
 
-	return true, nil
+	return nil
 }
