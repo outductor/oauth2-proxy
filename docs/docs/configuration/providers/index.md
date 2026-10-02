@@ -13,6 +13,7 @@ Valid providers are :
 - [Cidaas](cidaas.md)
 - [CiscoDuo](cisco_duo.md)
 - [DigitalOcean](digitalocean.md)
+- [Discord](discord.md)
 - [Facebook](facebook.md)
 - [Gitea](gitea.md)
 - [GitHub](github.md)

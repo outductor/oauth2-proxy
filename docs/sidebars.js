@@ -51,6 +51,7 @@ const sidebars = {
             "configuration/providers/cidaas",
             "configuration/providers/cisco_duo",
             "configuration/providers/digitalocean",
+            "configuration/providers/discord",
             "configuration/providers/facebook",
             "configuration/providers/gitea",
             "configuration/providers/github",
