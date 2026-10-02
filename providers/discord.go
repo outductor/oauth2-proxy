@@ -26,6 +26,9 @@ var _ Provider = (*DiscordProvider)(nil)
 const (
 	discordProviderName = "Discord"
 	discordDefaultScope = "identify guilds"
+
+	discordDefaultAPIPath = "/api/v10"
+	discordProfilePath    = "/users/@me"
 )
 
 var (
@@ -46,11 +49,12 @@ var (
 	}
 
 	// Default Profile URL for Discord.
-	// Pre-parsed URL of https://discord.com/api/users/@me.
+	// Pre-parsed URL of https://discord.com/api/v10/users/@me.
+	// Requests without an API version are routed to the deprecated v6.
 	discordDefaultProfileURL = &url.URL{
 		Scheme: "https",
 		Host:   "discord.com",
-		Path:   "/api/users/@me",
+		Path:   discordDefaultAPIPath + discordProfilePath,
 	}
 
 	// Default Validate URL for Discord (same as profile).
@@ -96,10 +100,19 @@ func makeDiscordHeader(accessToken string) http.Header {
 	return makeAuthorizationHeader(tokenTypeBearer, accessToken, nil)
 }
 
-// buildAPIURL constructs a Discord API URL with the given path
+// buildAPIURL constructs a Discord API URL with the given path.
+// The API base is taken from the profile URL, so a profile URL of
+// https://discord.com/api/v10/users/@me resolves paths under /api/v10.
+// If the profile URL does not end with /users/@me, the default /api/v10 base
+// on the profile URL's host is used.
 func (p *DiscordProvider) buildAPIURL(path string) string {
 	u := *p.ProfileURL
-	u.Path = path
+	base, ok := strings.CutSuffix(u.Path, discordProfilePath)
+	if !ok {
+		base = discordDefaultAPIPath
+	}
+	u.Path = base + path
+	u.RawPath = ""
 	return u.String()
 }
 
@@ -161,7 +174,7 @@ func (p *DiscordProvider) getUserGuildIDs(ctx context.Context, accessToken strin
 		ID string `json:"id"`
 	}
 
-	err := requests.New(p.buildAPIURL("/api/users/@me/guilds")).
+	err := requests.New(p.buildAPIURL("/users/@me/guilds")).
 		WithContext(ctx).
 		WithHeaders(makeDiscordHeader(accessToken)).
 		Do().
@@ -183,7 +196,7 @@ func (p *DiscordProvider) getRolesInGuild(ctx context.Context, accessToken, guil
 		Roles []string `json:"roles"`
 	}
 
-	err := requests.New(p.buildAPIURL(fmt.Sprintf("/api/users/@me/guilds/%s/member", guildID))).
+	err := requests.New(p.buildAPIURL(fmt.Sprintf("/users/@me/guilds/%s/member", guildID))).
 		WithContext(ctx).
 		WithHeaders(makeDiscordHeader(accessToken)).
 		Do().

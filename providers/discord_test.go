@@ -67,8 +67,8 @@ func TestNewDiscordProvider(t *testing.T) {
 	g.Expect(providerData.ProviderName).To(Equal("Discord"))
 	g.Expect(providerData.LoginURL.String()).To(Equal("https://discord.com/oauth2/authorize"))
 	g.Expect(providerData.RedeemURL.String()).To(Equal("https://discord.com/api/oauth2/token"))
-	g.Expect(providerData.ProfileURL.String()).To(Equal("https://discord.com/api/users/@me"))
-	g.Expect(providerData.ValidateURL.String()).To(Equal("https://discord.com/api/users/@me"))
+	g.Expect(providerData.ProfileURL.String()).To(Equal("https://discord.com/api/v10/users/@me"))
+	g.Expect(providerData.ValidateURL.String()).To(Equal("https://discord.com/api/v10/users/@me"))
 	g.Expect(providerData.Scope).To(Equal("identify guilds"))
 }
 
@@ -96,6 +96,36 @@ func TestDiscordProviderGuildWithoutRolesNoExtraScope(t *testing.T) {
 	})
 	g.Expect(err).To(BeNil())
 	g.Expect(p.Data().Scope).ToNot(ContainSubstring("guilds.members.read"))
+}
+
+func TestDiscordProviderBuildAPIURL(t *testing.T) {
+	testCases := map[string]struct {
+		profileURL string
+		expected   string
+	}{
+		"default profile URL": {
+			profileURL: "https://discord.com/api/v10/users/@me",
+			expected:   "https://discord.com/api/v10/users/@me/guilds",
+		},
+		"other API version": {
+			profileURL: "https://discord.com/api/v9/users/@me",
+			expected:   "https://discord.com/api/v9/users/@me/guilds",
+		},
+		"unrecognised profile path": {
+			profileURL: "https://example.com/oauth/profile",
+			expected:   "https://example.com/api/v10/users/@me/guilds",
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			profileURL, err := url.Parse(tc.profileURL)
+			assert.NoError(t, err)
+			p, err := NewDiscordProvider(&ProviderData{ProfileURL: profileURL}, options.DiscordOptions{})
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected, p.buildAPIURL("/users/@me/guilds"))
+		})
+	}
 }
 
 func TestDiscordProviderOverrides(t *testing.T) {
