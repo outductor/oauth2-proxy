@@ -11,6 +11,7 @@ import (
 
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/options"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/apis/sessions"
+	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/logger"
 	"github.com/oauth2-proxy/oauth2-proxy/v7/pkg/requests"
 )
 
@@ -111,8 +112,14 @@ func (p *DiscordProvider) EnrichSession(ctx context.Context, s *sessions.Session
 	return p.checkMembership(ctx, s)
 }
 
-// ValidateSession validates the AccessToken
+// ValidateSession checks that the session still satisfies the guild and role
+// restrictions and that the AccessToken is still valid.
+// The session groups are kept up to date by RefreshSession.
 func (p *DiscordProvider) ValidateSession(ctx context.Context, s *sessions.SessionState) bool {
+	if !p.isAllowed(s.Groups) {
+		logger.Printf("Discord user %s no longer meets the guild and role restrictions", s.User)
+		return false
+	}
 	return validateToken(ctx, p, s.AccessToken, makeDiscordHeader(s.AccessToken))
 }
 
@@ -189,21 +196,43 @@ func (p *DiscordProvider) getRolesInGuild(ctx context.Context, accessToken, guil
 }
 
 // checkMembership stores the user's membership in the configured guilds in the
-// session groups and verifies the guild and role restrictions.
-// Groups only contain configured guild IDs, plus "guildID:roleID" entries for
-// every role the user has in configured guilds that have role restrictions.
+// session groups and verifies the guild and role restrictions
 func (p *DiscordProvider) checkMembership(ctx context.Context, s *sessions.SessionState) error {
 	// If no guild restrictions are configured, allow all Discord users
 	if len(p.Guilds) == 0 {
 		return nil
 	}
 
-	userGuilds, err := p.getUserGuildIDs(ctx, s.AccessToken)
+	groups, roleErr, err := p.getMembership(ctx, s.AccessToken)
 	if err != nil {
 		return err
 	}
+	s.Groups = groups
 
-	var groups []string
+	if p.isAllowed(groups) {
+		return nil
+	}
+	if roleErr != nil {
+		return fmt.Errorf("could not verify Discord roles: %w", roleErr)
+	}
+	if p.hasRoleRestrictions() {
+		return errors.New("user does not have any required Discord role in allowed guilds")
+	}
+	return errors.New("user is not a member of any allowed Discord guild")
+}
+
+// getMembership returns the session groups for the user's membership in the
+// configured guilds.
+// Groups only contain configured guild IDs, plus "guildID:roleID" entries for
+// every role the user has in configured guilds that have role restrictions.
+// roleErr is set when the roles of some guilds could not be fetched; the
+// returned groups then lack the role entries of those guilds.
+func (p *DiscordProvider) getMembership(ctx context.Context, accessToken string) (groups []string, roleErr error, err error) {
+	userGuilds, err := p.getUserGuildIDs(ctx, accessToken)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var roleErrs []error
 	for _, guild := range p.Guilds {
 		if _, isMember := userGuilds[guild.ID]; !isMember {
@@ -214,7 +243,7 @@ func (p *DiscordProvider) checkMembership(ctx context.Context, s *sessions.Sessi
 		if len(guild.Roles) == 0 {
 			continue
 		}
-		roles, err := p.getRolesInGuild(ctx, s.AccessToken, guild.ID)
+		roles, err := p.getRolesInGuild(ctx, accessToken, guild.ID)
 		if err != nil {
 			roleErrs = append(roleErrs, fmt.Errorf("guild %s: %v", guild.ID, err))
 			continue
@@ -223,18 +252,8 @@ func (p *DiscordProvider) checkMembership(ctx context.Context, s *sessions.Sessi
 			groups = append(groups, discordRoleGroup(guild.ID, role))
 		}
 	}
-	s.Groups = groups
 
-	if p.isAllowed(groups) {
-		return nil
-	}
-	if len(roleErrs) > 0 {
-		return fmt.Errorf("could not verify Discord roles: %w", errors.Join(roleErrs...))
-	}
-	if p.hasRoleRestrictions() {
-		return errors.New("user does not have any required Discord role in allowed guilds")
-	}
-	return errors.New("user is not a member of any allowed Discord guild")
+	return groups, errors.Join(roleErrs...), nil
 }
 
 // isAllowed reports whether the given session groups satisfy any of the
@@ -303,6 +322,21 @@ func (p *DiscordProvider) RefreshSession(ctx context.Context, s *sessions.Sessio
 
 	if err := p.requestToken(ctx, params, s); err != nil {
 		return false, fmt.Errorf("failed to refresh token: %v", err)
+	}
+
+	// Re-read the guild and role membership so that ValidateSession can reject
+	// users who left a guild or lost a role. On lookup failures the previous
+	// groups are kept, as the refreshed tokens must still be saved.
+	if len(p.Guilds) > 0 {
+		groups, roleErr, err := p.getMembership(ctx, s.AccessToken)
+		switch {
+		case err != nil:
+			logger.Errorf("Could not refresh Discord guilds for user %s: %v", s.User, err)
+		case roleErr != nil:
+			logger.Errorf("Could not refresh Discord roles for user %s: %v", s.User, roleErr)
+		default:
+			s.Groups = groups
+		}
 	}
 
 	return true, nil

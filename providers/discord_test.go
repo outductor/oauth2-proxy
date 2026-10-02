@@ -38,20 +38,23 @@ func testDiscordProvider(hostname string, opts options.DiscordOptions) *DiscordP
 }
 
 func testDiscordBackend(payloads map[string]string) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			payload, ok := payloads[r.URL.Path]
-			if !ok {
-				w.WriteHeader(404)
-				return
-			}
-			if !IsAuthorizedInHeader(r.Header) {
-				w.WriteHeader(403)
-				return
-			}
-			w.WriteHeader(200)
-			w.Write([]byte(payload))
-		}))
+	return httptest.NewServer(testDiscordHandler(payloads))
+}
+
+func testDiscordHandler(payloads map[string]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		payload, ok := payloads[r.URL.Path]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		if !IsAuthorizedInHeader(r.Header) {
+			w.WriteHeader(403)
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(payload))
+	}
 }
 
 func TestNewDiscordProvider(t *testing.T) {
@@ -539,4 +542,110 @@ func TestDiscordProviderRoleFetchErrorIgnoredWhenAnotherGuildAllows(t *testing.T
 	session := CreateAuthorizedSession()
 	err := p.EnrichSession(context.Background(), session)
 	assert.NoError(t, err)
+}
+
+// testDiscordRefreshBackend serves the token endpoint, issuing the authorized
+// test access token, and the given API payloads
+func testDiscordRefreshBackend(payloads map[string]string) *httptest.Server {
+	api := testDiscordHandler(payloads)
+	return httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/oauth2/token" && r.Method == "POST" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(200)
+				w.Write([]byte(`{
+					"access_token": "` + authorizedAccessToken + `",
+					"refresh_token": "new_refresh_token",
+					"expires_in": 604800
+				}`))
+				return
+			}
+			api(w, r)
+		}))
+}
+
+func TestDiscordProviderRefreshSessionUpdatesGroups(t *testing.T) {
+	b := testDiscordRefreshBackend(map[string]string{
+		"/api/users/@me": `{"id": "123456789", "username": "testuser"}`,
+		// The user has left guild 111111111 since logging in
+		"/api/users/@me/guilds": `[
+			{"id": "222222222", "name": "Test Guild 2"}
+		]`,
+	})
+	defer b.Close()
+
+	bURL, _ := url.Parse(b.URL)
+	p := testDiscordProvider(bURL.Host, options.DiscordOptions{
+		Guilds: []options.DiscordGuild{
+			{ID: "111111111"},
+		},
+	})
+	p.RedeemURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/oauth2/token"}
+	p.ProfileURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+	p.ValidateURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+
+	session := &sessions.SessionState{
+		AccessToken:  "old_access_token",
+		RefreshToken: "old_refresh_token",
+		Groups:       []string{"111111111"},
+	}
+
+	refreshed, err := p.RefreshSession(context.Background(), session)
+	assert.NoError(t, err)
+	assert.True(t, refreshed)
+	assert.Empty(t, session.Groups)
+	assert.False(t, p.ValidateSession(context.Background(), session))
+}
+
+func TestDiscordProviderRefreshSessionKeepsGroupsOnLookupFailure(t *testing.T) {
+	b := testDiscordRefreshBackend(map[string]string{
+		"/api/users/@me": `{"id": "123456789", "username": "testuser"}`,
+		// No guilds endpoint: the guild lookup fails with a 404
+	})
+	defer b.Close()
+
+	bURL, _ := url.Parse(b.URL)
+	p := testDiscordProvider(bURL.Host, options.DiscordOptions{
+		Guilds: []options.DiscordGuild{
+			{ID: "111111111"},
+		},
+	})
+	p.RedeemURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/oauth2/token"}
+	p.ProfileURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+	p.ValidateURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+
+	session := &sessions.SessionState{
+		AccessToken:  "old_access_token",
+		RefreshToken: "old_refresh_token",
+		Groups:       []string{"111111111"},
+	}
+
+	refreshed, err := p.RefreshSession(context.Background(), session)
+	assert.NoError(t, err)
+	assert.True(t, refreshed)
+	assert.Equal(t, "new_refresh_token", session.RefreshToken)
+	assert.Equal(t, []string{"111111111"}, session.Groups)
+	assert.True(t, p.ValidateSession(context.Background(), session))
+}
+
+func TestDiscordProviderValidateSessionChecksRestrictions(t *testing.T) {
+	b := testDiscordBackend(map[string]string{
+		"/api/users/@me": `{"id": "123456789", "username": "testuser"}`,
+	})
+	defer b.Close()
+
+	bURL, _ := url.Parse(b.URL)
+	p := testDiscordProvider(bURL.Host, options.DiscordOptions{
+		Guilds: []options.DiscordGuild{
+			{ID: "111111111", Roles: []string{"admin"}},
+		},
+	})
+	p.ValidateURL = &url.URL{Scheme: "http", Host: bURL.Host, Path: "/api/users/@me"}
+
+	session := CreateAuthorizedSession()
+	session.Groups = []string{"111111111", "111111111:admin"}
+	assert.True(t, p.ValidateSession(context.Background(), session))
+
+	session.Groups = []string{"111111111", "111111111:member"}
+	assert.False(t, p.ValidateSession(context.Background(), session))
 }
