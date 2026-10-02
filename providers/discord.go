@@ -78,6 +78,14 @@ func NewDiscordProvider(p *ProviderData, opts options.DiscordOptions) (*DiscordP
 		Guilds:       opts.Guilds,
 	}
 
+	// Without guilds every Discord account is accepted, and the user ID is used
+	// as the email, so email domain restrictions cannot narrow this down.
+	// The legacy --provider=discord flags cannot configure guilds at all.
+	if len(provider.Guilds) == 0 {
+		logger.Print("WARNING: Discord provider has no guilds configured, any Discord user will be able to log in. " +
+			"Set discordConfig.guilds in the alpha configuration to restrict access.")
+	}
+
 	// Add guilds.members.read scope if any guild has role restrictions
 	if provider.hasRoleRestrictions() && !strings.Contains(p.Scope, "guilds.members.read") {
 		p.Scope += " guilds.members.read"
